@@ -179,7 +179,7 @@
 
   /* ================= CONFIGURACIÓN ================= */
   // Pegá acá la URL de tu Apps Script (termina en /exec). Ver instrucciones.
-  const API_URL = 'https://script.google.com/macros/s/AKfycby8s76KMn-rtQcatuD7go53-4FSmaqdw6K57QsBXYZuMY9HbFLuV9Dl2nMVWPSEj_Fu/exec';
+  const API_URL = 'PEGAR_AQUI_LA_URL_DE_APPS_SCRIPT';
   const POLL_MS = 5000;   // cada cuánto se actualiza la lista
 
   /* ================= Utilidades ================= */
@@ -247,7 +247,10 @@
 
   // Cada celu tiene un código por participante: así puede volver a ver SU resultado y nadie más
   const tokKey = i => 'ai-tok-' + S.id + '-' + i;
-  const hasTok = i => !!store.get(tokKey(i));
+  // Marca local: "este celu ya sacó como i". Es lo único que distingue mi nombre de los demás.
+  const doneKey = i => 'ai-done-' + S.id + '-' + i;
+  const isMine = i => !!store.get(doneKey(i));
+  const markMine = i => store.set(doneKey(i), '1');
   function getTok(i) {
     let t = store.get(tokKey(i));
     if (!t) { t = randomHex(32); store.set(tokKey(i), t); }
@@ -319,8 +322,7 @@
   function renderGame() {
     const app = $('#app');
     const N = S.names.length;
-    const count = S.drawn.filter(Boolean).length;
-    const goneCount = S.gone.filter(Boolean).length;
+    const count = S.drawnCount;
     const nodes = [];
 
     if (offline) {
@@ -339,28 +341,18 @@
           h('i', { style: 'width:' + Math.round(count / N * 100) + '%' }))),
 
       h('section', {},
-        h('div', { class: 'section-head' }, h('h3', { text: '¿Quién va a sacar?' })),
+        h('div', { class: 'section-head' }, h('h3', { text: '¿Quién sos?' })),
         h('div', { class: 'grid' }, S.names.map((n, i) => {
-          const drawn = !!S.drawn[i];
-          const mine = drawn && hasTok(i);
-          const sub = mine ? '👁 Ver mi resultado' : drawn ? '✓ Ya sacó' : 'Tocá para sacar';
+          // No se muestra quién ya sacó ni quién falta: todos los nombres se ven igual,
+          // salvo el propio en el celu desde el que se sacó.
+          const mine = isMine(i);
+          const sub = mine ? '👁 Ver mi resultado' : 'Tocá si sos vos';
           return h('button', {
             class: 'tile' + (mine ? ' mine' : ''), type: 'button',
-            disabled: drawn && !mine,
-            onclick: () => (drawn ? viewResult(i) : openConfirm(i))
+            onclick: () => (mine ? viewResult(i) : openConfirm(i))
           },
             h('span', { class: 'tile-name', text: n }),
             h('span', { class: 'tile-sub', text: sub }));
-        }))),
-
-      h('section', {},
-        h('div', { class: 'section-head' },
-          h('h3', { text: 'Nombres todavía en juego' }),
-          h('span', { text: (N - goneCount) + ' de ' + N })),
-        h('ul', { class: 'pool' }, S.names.map((n, j) => {
-          const gone = !!S.gone[j];
-          return h('li', { class: 'chip' + (gone ? ' gone' : ''), 'aria-disabled': gone ? 'true' : null },
-            h('span', { class: 'nm', text: n }), gone ? h('small', { text: 'salió' }) : null);
         })))
     );
     app.replaceChildren(...nodes);
@@ -397,7 +389,7 @@
   async function startDraw(i) {
     const id = S.id;
     const tok = getTok(i);
-    const pool = S.names.map((_, j) => j).filter(j => j !== i && !S.gone[j]);
+    const pool = S.names.map((_, j) => j).filter(j => j !== i);
     const shown = h('div', { class: 'spin', text: '…' });
     openModal([
       h('h2', { id: 'dlg-title', text: 'Sacando…' }),
@@ -409,6 +401,7 @@
     if (!res.ok) {
       showError(res);
     } else {
+      markMine(i);
       showResult(S.names[i], res.result);
     }
     refresh(true);
@@ -418,6 +411,7 @@
     openModal([h('h2', { id: 'dlg-title', text: 'Un momento…' })], { dismiss: false });
     const res = await safeApi('draw', { i, id: S.id, tok: getTok(i) });
     if (!res.ok) { showError(res); refresh(true); return; }
+    markMine(i);
     showResult(S.names[i], res.result);
   }
 
@@ -469,7 +463,7 @@
 
   function openAdminPanel(msg) {
     const pin = session.get('ai-pin') || '';
-    const started = S && S.configured && S.drawn.some(Boolean);
+    const started = S && S.configured && S.started;
     const configured = S && S.configured;
     const area = h('textarea', {
       class: 'inp', 'aria-label': 'Nombres, uno por línea', spellcheck: 'false', disabled: !!started,
@@ -507,7 +501,7 @@
     });
 
     const info = !configured ? 'Todavía no hay sorteo. Cargá los nombres y creá uno.'
-      : started ? 'Ya sacaron ' + S.drawn.filter(Boolean).length + ' de ' + S.names.length + '. Los nombres no se pueden editar una vez empezado el sorteo; para cambiarlos hay que reiniciarlo.'
+      : started ? 'Ya sacaron ' + S.drawnCount + ' de ' + S.names.length + '. Los nombres no se pueden editar una vez empezado el sorteo; para cambiarlos hay que reiniciarlo.'
       : 'Todavía nadie sacó: podés corregir los nombres y guardar (el sorteo se vuelve a armar).';
 
     openModal([
